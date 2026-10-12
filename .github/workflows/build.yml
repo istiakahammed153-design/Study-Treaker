@@ -11,6 +11,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Find project (unzip if you uploaded a .zip)
+        run: |
+          if [ ! -f package.json ]; then
+            ZIP=$(find . -maxdepth 2 -iname "*.zip" -not -path "./.git/*" | head -n 1)
+            if [ -z "$ZIP" ]; then echo "ERROR: no package.json and no .zip file found in the repository"; exit 1; fi
+            echo "Unzipping $ZIP"
+            mkdir -p "$RUNNER_TEMP/src"
+            unzip -q -o "$ZIP" -d "$RUNNER_TEMP/src"
+            PKG=$(find "$RUNNER_TEMP/src" -maxdepth 3 -name package.json -not -path "*/node_modules/*" | head -n 1)
+            if [ -z "$PKG" ]; then echo "ERROR: package.json not found inside the zip"; exit 1; fi
+            APP_DIR=$(dirname "$PKG")
+          else
+            APP_DIR="$GITHUB_WORKSPACE"
+          fi
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Project folder: $APP_DIR"
+          ls -la "$APP_DIR"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -21,28 +39,30 @@ jobs:
           java-version: 17
 
       - name: Install dependencies
-        run: npm install
+        run: cd "$APP_DIR" && npm install
 
       - name: Build web assets
-        run: npm run build:web
+        run: cd "$APP_DIR" && npm run build:web
 
       - name: Create Android project
-        run: npx cap add android
+        run: cd "$APP_DIR" && npx cap add android
 
       - name: Patch Android project (storage plugin, manifest, icons)
-        run: node scripts/patch-android.js
+        run: cd "$APP_DIR" && node scripts/patch-android.js
 
       - name: Sync web assets
-        run: npx cap sync android
+        run: cd "$APP_DIR" && npx cap sync android
 
       - name: Build debug APK
-        working-directory: android
         run: |
+          cd "$APP_DIR/android"
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/out/StudyTreaker.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: StudyTreaker-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: out/StudyTreaker.apk
